@@ -69,6 +69,7 @@ curl -F "file=@./example.txt" http://localhost:8080/upload
 - File manager: `GET /gui`
 - Authenticated actions in GUI:
   - View all files
+  - Upload files
   - Open public download links
   - Rename files
   - Delete files
@@ -79,3 +80,7 @@ If these are not set, they fall back to `UPLOAD_USERNAME`/`UPLOAD_PASSWORD`.
 Required for GUI login:
 - `GUI_SESSION_SECRET` must be set (used to sign session cookies).
 - `GUI_PASSWORD` (or `UPLOAD_PASSWORD`) must be set.
+
+Note:
+- API upload (`POST /upload`) still follows `UPLOAD_ENABLED`.
+- GUI upload is allowed for authenticated GUI users.

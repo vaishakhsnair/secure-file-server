@@ -107,6 +107,50 @@ def iter_chunks(upload: UploadFile, chunk_size: int = 1024 * 1024) -> Iterator[b
         yield chunk
 
 
+def validate_upload_name(original_name: str) -> str:
+    safe_name = Path(original_name or "").name
+    if not safe_name or safe_name in {".", ".."}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid filename")
+    if safe_name != (original_name or ""):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid filename")
+    return safe_name
+
+
+def store_uploaded_file(file: UploadFile, safe_name: str) -> int:
+    target = secure_path(safe_name)
+    if target.exists() and not ALLOW_OVERWRITE:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="File already exists")
+
+    total_size = 0
+    fd, tmp_path = tempfile.mkstemp(prefix="upload-", dir=str(STORAGE_DIR))
+
+    try:
+        with os.fdopen(fd, "wb") as tmp_file:
+            for chunk in iter_chunks(file):
+                total_size += len(chunk)
+                if total_size > MAX_UPLOAD_BYTES:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail=f"File exceeds limit of {MAX_UPLOAD_BYTES} bytes",
+                    )
+                tmp_file.write(chunk)
+
+        os.replace(tmp_path, target)
+        os.chmod(target, 0o600)
+    except HTTPException:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise
+    except Exception as exc:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Upload failed") from exc
+    finally:
+        file.file.close()
+
+    return total_size
+
+
 def create_gui_session_token(username: str) -> str:
     if not GUI_SESSION_SECRET:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="GUI session secret not configured")
@@ -165,7 +209,7 @@ def html_page(title: str, body: str) -> HTMLResponse:
     h1 {{ margin: 0 0 12px 0; font-size: 24px; }}
     p {{ margin: 8px 0; color: var(--muted); }}
     .row {{ display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }}
-    input[type=text], input[type=password] {{ background: #030712; color: var(--fg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; min-width: 220px; }}
+    input[type=text], input[type=password], input[type=file] {{ background: #030712; color: var(--fg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; min-width: 220px; }}
     button {{ background: #0ea5e9; border: 0; color: white; border-radius: 8px; padding: 8px 10px; cursor: pointer; }}
     button.danger {{ background: var(--err); }}
     table {{ width: 100%; border-collapse: collapse; font-size: 14px; }}
@@ -277,42 +321,8 @@ def upload_file(
     file: UploadFile = File(...),
     _: None = Depends(require_upload_auth),
 ) -> JSONResponse:
-    safe_name = Path(file.filename or "").name
-    if not safe_name or safe_name in {".", ".."}:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid filename")
-    if safe_name != (file.filename or ""):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid filename")
-
-    target = secure_path(safe_name)
-    if target.exists() and not ALLOW_OVERWRITE:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="File already exists")
-
-    total_size = 0
-    fd, tmp_path = tempfile.mkstemp(prefix="upload-", dir=str(STORAGE_DIR))
-
-    try:
-        with os.fdopen(fd, "wb") as tmp_file:
-            for chunk in iter_chunks(file):
-                total_size += len(chunk)
-                if total_size > MAX_UPLOAD_BYTES:
-                    raise HTTPException(
-                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                        detail=f"File exceeds limit of {MAX_UPLOAD_BYTES} bytes",
-                    )
-                tmp_file.write(chunk)
-
-        os.replace(tmp_path, target)
-        os.chmod(target, 0o600)
-    except HTTPException:
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
-        raise
-    except Exception as exc:
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Upload failed") from exc
-    finally:
-        file.file.close()
+    safe_name = validate_upload_name(file.filename or "")
+    total_size = store_uploaded_file(file, safe_name)
 
     return JSONResponse(
         {
@@ -411,8 +421,16 @@ def gui_home(request: Request, message: str = "", error: str = "") -> HTMLRespon
     <h1>File Manager</h1>
     <form method=\"post\" action=\"/gui/logout\"><button type=\"submit\">Logout</button></form>
   </div>
-  <p>Public file links are visible below. Rename and delete require this authenticated session.</p>
+  <p>Public file links are visible below. Upload, rename, and delete require this authenticated session.</p>
   {message_html}
+</div>
+<div class=\"card\">
+  <h1>Upload File</h1>
+  <form method=\"post\" action=\"/gui/upload\" enctype=\"multipart/form-data\" class=\"row\">
+    <input type=\"file\" name=\"file\" required>
+    <button type=\"submit\">Upload</button>
+  </form>
+  <p>Max size: <code>{MAX_UPLOAD_BYTES}</code> bytes. Overwrite: <code>{str(ALLOW_OVERWRITE).lower()}</code></p>
 </div>
 <div class=\"card\">
   <table>
@@ -460,6 +478,25 @@ def gui_rename(
         return gui_redirect("Rename failed", error=True)
 
     return gui_redirect("File renamed")
+
+
+@app.post("/gui/upload")
+def gui_upload(request: Request, file: UploadFile = File(...)) -> RedirectResponse:
+    require_gui_auth(request)
+
+    try:
+        safe_name = validate_upload_name(file.filename or "")
+        store_uploaded_file(file, safe_name)
+    except HTTPException as exc:
+        if exc.status_code == status.HTTP_400_BAD_REQUEST:
+            return gui_redirect("Invalid filename", error=True)
+        if exc.status_code == status.HTTP_409_CONFLICT:
+            return gui_redirect("File already exists", error=True)
+        if exc.status_code == status.HTTP_413_REQUEST_ENTITY_TOO_LARGE:
+            return gui_redirect(f"File too large (limit {MAX_UPLOAD_BYTES} bytes)", error=True)
+        return gui_redirect("Upload failed", error=True)
+
+    return gui_redirect("File uploaded")
 
 
 @app.post("/gui/delete")
