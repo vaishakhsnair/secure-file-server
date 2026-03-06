@@ -1,0 +1,24 @@
+services:
+  secure-file-server:
+    build:
+      context: .
+    container_name: secure-file-server
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      STORAGE_DIR: /srv/data
+      UPLOAD_ENABLED: ${UPLOAD_ENABLED:-false}
+      UPLOAD_USERNAME: ${UPLOAD_USERNAME:-uploader}
+      UPLOAD_PASSWORD: ${UPLOAD_PASSWORD:-change-me}
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-10485760}
+      ALLOW_OVERWRITE: ${ALLOW_OVERWRITE:-false}
+    volumes:
+      - ./data:/srv/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
