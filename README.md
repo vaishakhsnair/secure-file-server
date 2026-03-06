@@ -3,6 +3,7 @@
 Simple file server with:
 - Public file download (`GET /files/<name>`)
 - Password-protected upload (`POST /upload` with HTTP Basic auth)
+- Authenticated web GUI (`/gui`) for file browsing and management
 - Uploads denied by default (`UPLOAD_ENABLED=false`)
 
 ## Security controls
@@ -14,6 +15,7 @@ Simple file server with:
 - Max upload size limit.
 - Atomic writes (`temp file` -> `os.replace`).
 - Overwrite protection by default.
+- Signed, expiring GUI session cookies.
 - Security headers (`nosniff`, `DENY`, etc.).
 
 ## Run
@@ -31,7 +33,7 @@ uvicorn app:app --host 0.0.0.0 --port 8080
 ```bash
 cd secure-file-server
 cp .env.example .env
-# update .env with a strong UPLOAD_PASSWORD before enabling uploads
+# set a strong GUI_SESSION_SECRET and GUI_PASSWORD in .env
 docker compose up --build -d
 ```
 
@@ -61,3 +63,19 @@ Unauthenticated upload is blocked:
 curl -F "file=@./example.txt" http://localhost:8080/upload
 # -> HTTP 401
 ```
+
+## Web GUI
+- Login page: `GET /gui/login`
+- File manager: `GET /gui`
+- Authenticated actions in GUI:
+  - View all files
+  - Open public download links
+  - Rename files
+  - Delete files
+
+Default GUI credentials use `GUI_USERNAME`/`GUI_PASSWORD`.
+If these are not set, they fall back to `UPLOAD_USERNAME`/`UPLOAD_PASSWORD`.
+
+Required for GUI login:
+- `GUI_SESSION_SECRET` must be set (used to sign session cookies).
+- `GUI_PASSWORD` (or `UPLOAD_PASSWORD`) must be set.
