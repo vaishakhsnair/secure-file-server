@@ -313,7 +313,7 @@ def download_file(file_path: str):
     target = secure_path(file_path)
     if not target.is_file():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
-    return FileResponse(path=target)
+    return FileResponse(path=target, filename=target.name)
 
 
 @app.post("/upload")
