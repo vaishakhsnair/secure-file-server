@@ -34,6 +34,7 @@ uvicorn app:app --host 0.0.0.0 --port 8080
 cd secure-file-server
 cp .env.example .env
 # set a strong GUI_SESSION_SECRET and GUI_PASSWORD in .env
+mkdir -p data
 docker compose up --build -d
 ```
 
@@ -45,6 +46,23 @@ docker compose down
 Logs:
 ```bash
 docker compose logs -f
+```
+
+If you see `Permission denied: '/srv/data/upload-...'`:
+```bash
+cd secure-file-server
+mkdir -p data
+sudo chown -R "$(id -u):$(id -g)" data
+```
+Then set matching values in `.env`:
+```bash
+PUID=$(id -u)
+PGID=$(id -g)
+```
+Restart:
+```bash
+docker compose down
+docker compose up --build -d
 ```
 
 ## Use
